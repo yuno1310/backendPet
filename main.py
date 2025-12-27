@@ -157,13 +157,12 @@ def add_pet(
             },
         ).fetchone()
 
-        print(result)
         session.commit()
 
         if result is None:
             raise HTTPException(500, "No result returned from stored procedure")
 
-        return {"return_code": result.return_code}
+        return {"PetID": result[0]}
 
     except Exception as e:
         session.rollback()
@@ -196,8 +195,18 @@ def booking_find(
         if result is None:
             raise HTTPException(status_code=500, detail="No result returned")
 
-        print(result)
-        return {"return_code": result}
+        print(type(result))
+
+        return {
+            "return_code": {
+                "bookingID": result[0],
+                "branchID": result[1],
+                "bookingTime": result[2],
+                "status": result[3],
+                "petid": result[4],
+                "serviceID": result[5],
+            }
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -232,6 +241,7 @@ def customer_register(
             raise HTTPException(400, "Pet lists length mismatch")
 
         sql = """
+        SET NOCOUNT ON;
         DECLARE @RC INT;
         DECLARE @Pets dbo.PetList;
         """
@@ -273,7 +283,6 @@ def customer_register(
             "date_of_birth": date_of_birth,
             "membership_tier": membership_tier,
         }
-
         for i in range(len(pet_name)):
             params.update(
                 {
@@ -286,11 +295,16 @@ def customer_register(
                 }
             )
 
-        result = session.execute(text(sql), params).fetchone()
-        return {"return_code": result.return_code}
+        result = session.execute(text(sql), params)
+        result.fetchone()
+        session.commit()
+        success = True
+        return {"return_code": success}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        success = False
+        print(e)
+        return {"return_code": success}
 
 
 @app.post("/scenario2/visit_auto_create")
@@ -318,9 +332,10 @@ def visit_auto_create(
                 "branch_id": branch_id,
             },
         ).fetchone()
-
-        return {"return_code": result.return_code}
-
+        if result is not None:
+            return {"flag": True}
+        else:
+            return {"flag": False}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -419,7 +434,8 @@ def service_order_add(
             )
 
         result = session.execute(text(sql), params).fetchone()
-        return {"return_code": result.return_code}
+        print(result)
+        return {"return_code": result.VisitID}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
