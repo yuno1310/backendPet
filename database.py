@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker, Session
 SERVER = "localhost"
 DATABASE = "PetCareX_DB"
 USERNAME = "sa"
-PASSWORD = "StrongPass%40123"  # StrongPass@123
+PASSWORD = "123456789"  # StrongPass@123
 
 DATABASE_URL = (
     "mssql+pyodbc://"

@@ -2,9 +2,14 @@ from datetime import date
 from typing import List, Union
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
-
-from petcarex_backend.database import SessionDep
+import json 
+from datetime import datetime
+from pathlib import Path
+from database import SessionDep
 from sqlalchemy import text
+
+OUTPUT_DIR = Path("E:\\Web_For_CSDLNC\\backendPet\\result")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI()
 
@@ -20,7 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+### Scenario 1 ###
 @app.get("/scenario1/customer_check")
 def customer_check(phone_number: str, session: SessionDep):
     result = session.execute(
@@ -164,7 +169,7 @@ def add_pet(
         session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-
+### Scenario 2 ###
 @app.post("/scenario2/booking_find")
 def booking_find(
     phone_number: str,
@@ -419,7 +424,7 @@ def service_order_add(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+### Scenario 3 ###
 @app.post("/scenario3/service_order_pending")
 def get_pending_service_orders(
     branch_id: int,
@@ -629,7 +634,7 @@ def service_order_complete(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+### Scenario 4 ###
 @app.post("/scenario4/visit_pending_payment")
 def visit_get_pending_payment_all(
     branch_id: int,
@@ -738,7 +743,7 @@ def invoice_create(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+### Scenario 5 ###
 @app.get("/scenario5/pet_medical_history")
 def pet_medical_history(
     pet_id: int,
@@ -760,7 +765,7 @@ def pet_medical_history(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+### Scenario 6 ###
 @app.get("/scenario6/report_annual_revenue")
 def report_annual_revenue(
     target_year: int,
@@ -782,7 +787,7 @@ def report_annual_revenue(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+### Scenario 7 ###
 @app.get("/scenario7/inventory_low_stock")
 def inventory_low_stock(
     current_branch_id: int,
@@ -804,21 +809,43 @@ def inventory_low_stock(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
+### Scenario 8 ###
 @app.get("/scenario8/report_churn_customers")
-def report_churn_customers(
-    session: SessionDep,
-):
+def report_churn_customers(session: SessionDep):
     try:
-        result = session.execute(
-            text("""
-            EXEC dbo.SP_Report_ChurnCustomers;
-            """)
-        )
+        # 1) chạy SP
+        result = session.execute(text("EXEC dbo.SP_Report_ChurnCustomers;"))
 
-        rows = result.mappings().all()
+        # 2) tạo tên file theo timestamp
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = OUTPUT_DIR / f"churn_customers_{ts}.json"
 
-        return {"data": rows}
+        # 3) ghi JSON dạng mảng: [ {...}, {...}, ... ]
+        count = 0
+        with out_path.open("w", encoding="utf-8") as f:
+            f.write("[\n")
+            first = True
+
+            for row in result.mappings().yield_per(1000):
+                # row là RowMapping -> convert sang dict
+                obj = dict(row)
+
+                # json.dump 1 object/lần (stream)
+                if not first:
+                    f.write(",\n")
+                else:
+                    first = False
+
+                json.dump(obj, f, ensure_ascii=False, default=str)
+                count += 1
+
+            f.write("\n]\n")
+
+        return {
+            "message": "Saved churn customers to json file",
+            "file": str(out_path),
+            "count": count,
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
