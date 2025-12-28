@@ -3,14 +3,11 @@ from typing import List, Union
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 
-from database import SessionDep
+from petcarex_backend.database import SessionDep
 from sqlalchemy import text
 
-from pydantic import BaseModel
-from decimal import Decimal
-from schemas import MedicalHistoryResponse, AnnualRevenueResponse
-app = FastAPI()
 
+app = FastAPI()
 origins = [
     "http://localhost:5173",  # Vite default port
     "http://127.0.0.1:5173",
@@ -144,7 +141,8 @@ def add_pet(
             EXECUTE @RC = dbo.sp_Pet_Add
                 @CustomerID = :customer_id,
                 @PetName = :pet_name,
-                @Species = :spPetID@Breed = :breed,
+                @Species = :species,
+                @Breed = :breed,
                 @DateOfBirth = :date_of_birth,
                 @Gender = :gender,
                 @HealthStatus = :health_status;
