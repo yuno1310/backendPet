@@ -3,9 +3,12 @@ from typing import List, Union
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 
-from petcarex_backend.database import SessionDep
+from database import SessionDep
 from sqlalchemy import text
 
+from pydantic import BaseModel
+from decimal import Decimal
+from schemas import MedicalHistoryResponse, AnnualRevenueResponse
 app = FastAPI()
 
 origins = [
