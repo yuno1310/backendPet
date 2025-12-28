@@ -56,8 +56,7 @@ def create_manual(
             @ReceptionistID = :receptionistid,
             @CustomerName = :customername,
             @PhoneNumber = :phonenumber,
-            @Note = :note,
-            @BookingID = @BookingID OUTPUT;
+            @Note = :note;
 
         SELECT @BookingID AS booking_id;
         """),
@@ -69,6 +68,7 @@ def create_manual(
             "note": note,
         },
     ).fetchone()
+    session.commit()
     return {"booking_id": result[0]}
 
 
@@ -332,11 +332,13 @@ def visit_auto_create(
                 "branch_id": branch_id,
             },
         ).fetchone()
+        session.commit()
         if result is not None:
             return {"flag": True}
         else:
             return {"flag": False}
     except Exception as e:
+        session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -365,10 +367,11 @@ def visit_create(
                 "branch_id": branch_id,
             },
         ).fetchone()
-
-        return {"return_code": result.return_code}
+        session.commit()
+        return {"return_code": result[0] if result else None}
 
     except Exception as e:
+        session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -433,18 +436,27 @@ def service_order_add(
                 }
             )
 
-        result = session.execute(text(sql), params).fetchone()
-        print(result)
-        return {"return_code": result.VisitID}
+        result = session.execute(text(sql), params)
+        session.commit()  # Lưu dữ liệu vào database
+        
+        # Kiểm tra xem result có rows hay không
+        try:
+            row = result.fetchone()
+            return {"return_code": row[0] if row else 1}
+        except:
+            # Nếu không có result set, return thành công
+            return {"return_code": 1}
 
     except Exception as e:
+        session.rollback()  # Rollback nếu có lỗi
+        print(f"Error in service_order_add: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 ### Scenario 3 ###
 @app.post("/scenario3/service_order_pending")
 def get_pending_service_orders(
     branch_id: int,
-    session: SessionDep,
+    session: SessionDep,    
 ):
     try:
         result = session.execute(
