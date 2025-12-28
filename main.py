@@ -689,34 +689,86 @@ def visit_get_pending_payment_all(
             {
                 "branch_id": branch_id,
             },
-        ).fetchone()
-
-        return {"return_code": result.return_code}
-
+        ).fetchall()
+        orders = []
+        for item in result:
+            orders.append(
+                {
+                    "VisitID": item[0],
+                    "CustomerName": item[1],
+                    "TimeIn": item[2],
+                    "ReceptionistName": item[3],
+                }
+            )
+        return orders
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/scenario4/visit_details")
+@app.get("/scenario4/visit_details/{visit_id}")
 def visit_get_details(
     visit_id: int,
     session: SessionDep,
 ):
     try:
-        result = session.execute(
+        # Get visit basic info
+        visit_result = session.execute(
             text("""
-            DECLARE @RC INT;
-
-            EXEC @RC = dbo.SP_Visit_GetDetails
-                @VisitID = :visit_id;
-
-            SELECT @RC AS return_code;
+            EXEC dbo.SP_Visit_GetDetails @VisitID = :visit_id;
             """),
             {"visit_id": visit_id},
         ).fetchone()
 
-        return {"return_code": result.return_code}
+        if not visit_result:
+            raise HTTPException(status_code=404, detail="Visit not found")
 
+        # Get service orders for this visit
+        orders_result = session.execute(
+            text("""
+            SELECT 
+                SO.OrderID,
+                SO.ServiceName,
+                P.PetName,
+                SO.Status,
+                SO.Price,
+                SO.Discount,
+                SO.Note
+            FROM ServiceOrder SO
+            LEFT JOIN Pet P ON SO.PetID = P.PetID
+            WHERE SO.VisitID = :visit_id
+            ORDER BY SO.OrderID;
+            """),
+            {"visit_id": visit_id},
+        ).fetchall()
+
+        service_orders = []
+        for row in orders_result:
+            service_orders.append(
+                {
+                    "ServiceOrderID": row[0],
+                    "ServiceName": row[1],
+                    "PetName": row[2],
+                    "Status": row[3],
+                    "Price": float(row[4]) if row[4] else 0,
+                    "Discount": float(row[5]) if row[5] else 0,
+                    "Note": row[6],
+                }
+            )
+
+        return {
+            "VisitID": visit_result[0],
+            "TimeIn": str(visit_result[1]) if visit_result[1] else None,
+            "CustomerID": visit_result[2],
+            "CustomerName": visit_result[3],
+            "PhoneNumber": visit_result[4].strip() if visit_result[4] else "",
+            "LoyaltyPoints": visit_result[5] if visit_result[5] else 0,
+            "MembershipTier": visit_result[6],
+            "BranchID": visit_result[7],
+            "ServiceOrders": service_orders,
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -727,22 +779,60 @@ def invoice_preview(
     session: SessionDep,
 ):
     try:
-        result = session.execute(
-            text("""
-            DECLARE @RC INT;
+        # Get the raw connection
+        connection = session.connection()
+        cursor = connection.connection.cursor()
 
-            EXEC @RC = dbo.SP_Invoice_Preview
-                @VisitID = :visit_id;
+        # Execute the stored procedure
+        cursor.execute("EXEC dbo.SP_Invoice_Preview @VisitID = ?", (visit_id,))
 
-            SELECT @RC AS return_code;
-            """),
-            {"visit_id": visit_id},
-        ).fetchone()
+        # First result set: Line items
+        line_items = []
+        columns = [column[0] for column in cursor.description]
+        for row in cursor.fetchall():
+            line_items.append(
+                {
+                    "OrderID": row[0],
+                    "PetName": row[1],
+                    "ServiceName": row[2],
+                    "BasePrice": float(row[3]) if row[3] else 0,
+                    "DiscountAmount": float(row[4]) if row[4] else 0,
+                    "FinalItemPrice": float(row[5]) if row[5] else 0,
+                }
+            )
 
-        return {"return_code": result.return_code}
+        # Move to second result set: Totals
+        totals = {
+            "SubTotal_Base_All": 0,
+            "ServiceOrderDiscount_Total": 0,
+            "TotalAmount_Net_Before_Final_Discount": 0,
+        }
+
+        if cursor.nextset():
+            totals_row = cursor.fetchone()
+            if totals_row:
+                totals = {
+                    "SubTotal_Base_All": float(totals_row[0]) if totals_row[0] else 0,
+                    "ServiceOrderDiscount_Total": float(totals_row[1])
+                    if totals_row[1]
+                    else 0,
+                    "TotalAmount_Net_Before_Final_Discount": float(totals_row[2])
+                    if totals_row[2]
+                    else 0,
+                }
+
+        cursor.close()
+
+        return {"line_items": line_items, "totals": totals}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Check if it's the warning about existing invoice
+        error_message = str(e)
+        if "Cảnh báo" in error_message or "đã được tạo" in error_message:
+            raise HTTPException(
+                status_code=400, detail="Invoice for this VisitID already exists"
+            )
+        raise HTTPException(status_code=500, detail=error_message)
 
 
 @app.post("/scenario4/invoice_create")
@@ -754,33 +844,59 @@ def invoice_create(
     session: SessionDep,
 ):
     try:
-        result = session.execute(
-            text("""
-            DECLARE @RC INT;
+        # Get the raw connection
+        connection = session.connection()
+        cursor = connection.connection.cursor()
 
-            EXEC @RC = dbo.SP_Invoice_Create
-                @VisitID = :visit_id,
-                @ReceptionistID = :receptionist_id,
-                @DiscountRate = :discount_rate,
-                @PaymentMethod = :payment_method;
+        # Execute the stored procedure
+        cursor.execute(
+            "EXEC dbo.SP_Invoice_Create @VisitID = ?, @ReceptionistID = ?, @DiscountRate = ?, @PaymentMethod = ?",
+            (visit_id, receptionist_id, discount_rate, payment_method),
+        )
 
-            SELECT @RC AS return_code;
-            """),
-            {
-                "visit_id": visit_id,
-                "receptionist_id": receptionist_id,
-                "discount_rate": discount_rate,
-                "payment_method": payment_method,
-            },
-        ).fetchone()
+        # Fetch the result (NewInvoiceID, TotalPaid, PointsEarned)
+        result_row = cursor.fetchone()
 
-        return {"return_code": result.return_code}
+        if result_row:
+            response = {
+                "NewInvoiceID": result_row[0],
+                "TotalPaid": float(result_row[1]) if result_row[1] else 0,
+                "PointsEarned": result_row[2] if result_row[2] else 0,
+            }
+        else:
+            response = {"NewInvoiceID": None, "TotalPaid": 0, "PointsEarned": 0}
+
+        cursor.close()
+
+        # Commit the transaction
+        session.commit()
+
+        return response
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Rollback on error
+        session.rollback()
+
+        error_message = str(e)
+
+        # Handle specific error cases
+        if "Tỷ lệ giảm giá phải nằm trong khoảng" in error_message:
+            raise HTTPException(
+                status_code=400, detail="Discount rate must be between 0.0 and 1.0"
+            )
+        elif "VisitID không hợp lệ" in error_message:
+            raise HTTPException(
+                status_code=404, detail="Invalid VisitID or Visit already paid"
+            )
+        elif "Không có dịch vụ/sản phẩm nào đã hoàn thành" in error_message:
+            raise HTTPException(
+                status_code=400, detail="No completed services/products to pay for"
+            )
+
+        raise HTTPException(status_code=500, detail=error_message)
 
 
-@app.get("/scenario5/pet_medical_history")
+@app.get("/scenario5/pet_medical_history", response_model=List[MedicalHistoryResponse])
 def pet_medical_history(
     pet_id: int,
     session: SessionDep,
@@ -796,13 +912,13 @@ def pet_medical_history(
 
         rows = result.mappings().all()
 
-        return {"data": rows}
+        return rows
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/scenario6/report_annual_revenue")
+@app.get("/scenario6/report_annual_revenue", response_model=List[AnnualRevenueResponse])
 def report_annual_revenue(
     target_year: int,
     session: SessionDep,
@@ -818,13 +934,32 @@ def report_annual_revenue(
 
         rows = result.mappings().all()
 
-        return {"year": target_year, "data": rows}
+        return rows
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/scenario7/inventory_low_stock")
+@app.get("/scenario7/report_churn_customers")
+def report_churn_customers(
+    session: SessionDep,
+):
+    try:
+        result = session.execute(
+            text("""
+            EXEC dbo.SP_Report_ChurnCustomers;
+            """)
+        )
+
+        rows = result.mappings().all()
+
+        return {"data": rows}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/scenario8/inventory_low_stock")
 def inventory_low_stock(
     current_branch_id: int,
     session: SessionDep,
@@ -841,25 +976,6 @@ def inventory_low_stock(
         rows = result.mappings().all()
 
         return {"branch_id": current_branch_id, "data": rows}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/scenario8/report_churn_customers")
-def report_churn_customers(
-    session: SessionDep,
-):
-    try:
-        result = session.execute(
-            text("""
-            EXEC dbo.SP_Report_ChurnCustomers;
-            """)
-        )
-
-        rows = result.mappings().all()
-
-        return {"data": rows}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
