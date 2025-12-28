@@ -785,8 +785,26 @@ def report_annual_revenue(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/scenario7/report_churn_customers")
+def report_churn_customers(
+    session: SessionDep,
+):
+    try:
+        result = session.execute(
+            text("""
+            EXEC dbo.SP_Report_ChurnCustomers;
+            """)
+        )
 
-@app.get("/scenario7/inventory_low_stock")
+        rows = result.mappings().all()
+
+        return {"data": rows}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/scenario8/inventory_low_stock")
 def inventory_low_stock(
     current_branch_id: int,
     session: SessionDep,
@@ -808,20 +826,4 @@ def inventory_low_stock(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/scenario8/report_churn_customers")
-def report_churn_customers(
-    session: SessionDep,
-):
-    try:
-        result = session.execute(
-            text("""
-            EXEC dbo.SP_Report_ChurnCustomers;
-            """)
-        )
 
-        rows = result.mappings().all()
-
-        return {"data": rows}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
