@@ -64,6 +64,7 @@ def create_manual(
             "note": note,
         },
     ).fetchone()
+    session.commit()
     return {"booking_id": result[0]}
 
 
@@ -76,42 +77,49 @@ def create_detailed(
     note: str,
     session: SessionDep,
 ):
-    conn = session.connection().connection  #
-    cursor = conn.cursor()
-
-    tvp_rows = [(d["service_id"], d["petid"], d["note"]) for d in details]
-
-    booking_id = cursor.execute("SELECT 0").fetchone()[0]
     try:
-        row = cursor.execute(
+        sql = text(
             """
-            DECLARE @BookingID INT;
-
-            EXEC dbo.SP_Booking_CreateDetailed
-                @CustomerID = ?,
-                @BranchID = ?,
-                @ReceptionistID = ?,
-                @Details = ?,
-                @Note = ?,
+            DECLARE @RC int;
+            DECLARE @BookingID int;
+            DECLARE @Details [dbo].[BookingDetailList];
+            
+            -- Insert booking details into table variable
+            """
+            + "\n".join(
+                [
+                    f"INSERT INTO @Details (ServiceID, PetID, Note) VALUES ({d['service_id']}, {d['petid']}, {repr(d.get('note'))});"
+                    for d in details
+                ]
+            )
+            + """
+            
+            -- Execute stored procedure
+            EXEC @RC = [dbo].[SP_Booking_CreateDetailed]
+                @CustomerID = :customer_id,
+                @BranchID = :branch_id,
+                @ReceptionistID = :receptionist_id,
+                @Details = @Details,
+                @Note = :note,
                 @BookingID = @BookingID OUTPUT;
+        """
+        )
 
-            SELECT @BookingID AS booking_id;
-            """,
-            customer_id,
-            branch_id,
-            receptionist_id,
-            tvp_rows,
-            note,
-        ).fetchone()
+        session.execute(
+            sql,
+            {
+                "customer_id": customer_id,
+                "branch_id": branch_id,
+                "receptionist_id": receptionist_id,
+                "note": note,
+            },
+        )
 
-        if not row or row[0] is None:
-            raise HTTPException(status_code=400, detail="Booking creation failed")
-
-        return {"booking_id": row[0]}
+        session.commit()
 
     except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        session.rollback()
+        raise e
 
 
 @app.post("/scenario1/pet_add")
@@ -133,8 +141,7 @@ def add_pet(
             EXECUTE @RC = dbo.sp_Pet_Add
                 @CustomerID = :customer_id,
                 @PetName = :pet_name,
-                @Species = :species,
-                @Breed = :breed,
+                @Species = :spPetID@Breed = :breed,
                 @DateOfBirth = :date_of_birth,
                 @Gender = :gender,
                 @HealthStatus = :health_status;
@@ -327,6 +334,8 @@ def visit_auto_create(
                 "branch_id": branch_id,
             },
         ).fetchone()
+        session.commit()
+
         if result is not None:
             return {"flag": True}
         else:
@@ -360,9 +369,12 @@ def visit_create(
                 "branch_id": branch_id,
             },
         ).fetchone()
+        session.commit()
 
-        return {"return_code": result.return_code}
-
+        if result is not None:
+            return {"success": True}
+        else:
+            return {"success": False}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -454,9 +466,19 @@ def get_pending_service_orders(
             {
                 "branch_id": branch_id,
             },
-        ).fetchone()
-
-        return {"return_code": result.return_code}
+        ).fetchall()
+        orders = []
+        for item in result:
+            orders.append(
+                {
+                    "orderID": item[0],
+                    "PetName": item[1],
+                    "ServiceName": item[2],
+                    "TimeIn": item[3],
+                    "Note": item[4],
+                }
+            )
+        return orders
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -484,11 +506,14 @@ def medical_record_create(
                 "vet_id": vet_id,
             },
         ).fetchone()
-
-        return {"return_code": result.return_code}
-
+        session.commit()
+        if result is not None:
+            return {"success": True}
+        else:
+            return {"success": False}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(e)
+        return {"success": False}
 
 
 @app.post("/scenario3/medical_record_update")
