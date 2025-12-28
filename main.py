@@ -3,9 +3,12 @@ from typing import List, Union
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
 
-from petcarex_backend.database import SessionDep
+from database import SessionDep
 from sqlalchemy import text
 
+from pydantic import BaseModel
+from decimal import Decimal
+from schemas import MedicalHistoryResponse, AnnualRevenueResponse
 app = FastAPI()
 
 origins = [
@@ -739,7 +742,7 @@ def invoice_create(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/scenario5/pet_medical_history")
+@app.get("/scenario5/pet_medical_history", response_model=List[MedicalHistoryResponse])
 def pet_medical_history(
     pet_id: int,
     session: SessionDep,
@@ -755,13 +758,13 @@ def pet_medical_history(
 
         rows = result.mappings().all()
 
-        return {"data": rows}
+        return rows
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/scenario6/report_annual_revenue")
+@app.get("/scenario6/report_annual_revenue", response_model=List[AnnualRevenueResponse])
 def report_annual_revenue(
     target_year: int,
     session: SessionDep,
@@ -777,7 +780,7 @@ def report_annual_revenue(
 
         rows = result.mappings().all()
 
-        return {"year": target_year, "data": rows}
+        return rows
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
