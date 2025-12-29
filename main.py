@@ -278,6 +278,32 @@ def add_pet(
         session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/scenario1/get_services")
+def get_services(
+    session: SessionDep,
+):
+    try:
+        result = session.execute(
+            text("""
+            EXEC dbo.sp_GetServices;
+            """)
+        ).fetchall()
+
+        services = []
+        print(result)
+        for row in result:
+            services.append(
+                {
+                    "ServiceID": row[0],
+                    "ServiceName": row[1],
+                    "Price": float(row[2]) if row[2] else 0
+                }
+            )
+
+        return services
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/scenario2/booking_find")
 def booking_find(
@@ -300,7 +326,7 @@ def booking_find(
                 "phone_number": phone_number,
                 "branch_id": branch_id,
             },
-        ).fetchone()
+        ).fetchall()
 
         if result is None:
             raise HTTPException(status_code=500, detail="No result returned")
@@ -308,14 +334,15 @@ def booking_find(
         print(type(result))
 
         return {
-            "return_code": {
-                "bookingID": result[0],
-                "branchID": result[1],
-                "bookingTime": result[2],
-                "status": result[3],
-                "petid": result[4],
-                "serviceID": result[5],
-            }
+            # "return_code": {
+            #     "bookingID": result[0],
+            #     "branchID": result[1],
+            #     "bookingTime": result[2],
+            #     "status": result[3],
+            #     "petid": result[4],
+            #     "serviceID": result[5],
+            # }
+            result[i]._mapping for i in range(len(result))  
         }
 
     except Exception as e:
