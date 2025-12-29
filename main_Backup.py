@@ -23,13 +23,11 @@ app.add_middleware(
 
 @app.get("/scenario1/customer_check")
 def customer_check(phone_number: str, session: SessionDep):
-    # SP1: SP_Customer_Check
     result = session.execute(
-        text("EXEC dbo.SP_Customer_Check @PhoneNumber = :phone"),
-        {"phone": phone_number},
+        text("EXEC dbo.SP_Customer_Check @PhoneNumber = :phone"), {"phone": phone_number}
     ).fetchone()
 
-    if not result or not result.CustomerID:
+    if not result.CustomerID:
         return {"exists": False}
 
     return {"exists": True, "customer": dict(result._mapping)}
@@ -70,85 +68,6 @@ def create_manual(
     return {"booking_id": result[0]}
 
 
-# @app.post("/scenario1/create_detailed")
-# def create_detailed(
-#     customer_id: int,
-#     branch_id: int,
-#     receptionist_id: int,
-#     details: list[dict],
-#     note: str,
-#     session: SessionDep,
-# ):
-#     """SP3: SP_Booking_CreateDetailed
-
-#     details: list các dòng BookingDetails {service_id, petid, note}
-#     Trả về booking_id.
-#     """
-#     if not details:
-#         raise HTTPException(status_code=400, detail="details must not be empty")
-
-#     try:
-#         # Build a parameterized INSERT block for @Details
-#         insert_lines = []
-#         bind_params = {
-#             "customer_id": customer_id,
-#             "branch_id": branch_id,
-#             "receptionist_id": receptionist_id,
-#             "note": note,
-#         }
-
-#         for i, d in enumerate(details):
-#             if "service_id" not in d or "petid" not in d:
-#                 raise HTTPException(status_code=400, detail=f"details[{i}] missing service_id/petid")
-#             bind_params[f"service_id_{i}"] = int(d["service_id"])
-#             bind_params[f"petid_{i}"] = int(d["petid"])
-#             bind_params[f"detail_note_{i}"] = str(d.get("note", ""))
-#             insert_lines.append(
-#                 f"INSERT INTO @Details (ServiceID, PetID, Note) VALUES (:service_id_{i}, :petid_{i}, :detail_note_{i});"
-#             )
-
-#         sql = text(
-#             """
-#             SET NOCOUNT ON;
-#             DECLARE @RC INT;
-#             DECLARE @BookingID INT;
-#             DECLARE @Details dbo.BookingDetailList;
-#             """
-#             + "\n".join(insert_lines)
-#             + """
-
-#             EXEC @RC = dbo.SP_Booking_CreateDetailed
-#                 @CustomerID = :customer_id,
-#                 @BranchID = :branch_id,
-#                 @ReceptionistID = :receptionist_id,
-#                 @Details = @Details,
-#                 @Note = :note
-
-#             SELECT @RC AS return_code, @BookingID AS booking_id;
-#             """
-#         )
-
-#         result = session.execute(sql, bind_params).fetchone()
-#         session.commit()
-
-#         if not result:
-#             raise HTTPException(status_code=500, detail="No result returned from SP_Booking_CreateDetailed")
-
-#         rc = int(result[0])
-#         booking_id = result[1]
-#         if rc != 0 or booking_id is None:
-#             raise HTTPException(status_code=400, detail=f"SP_Booking_CreateDetailed failed (RC={rc})")
-
-#         return {"booking_id": booking_id}
-
-#     except HTTPException:
-#         print(e)
-#         session.rollback()
-#         raise
-#     except Exception as e:
-#         print(e)
-#         session.rollback()
-#         raise HTTPException(status_code=500, detail=str(e))
 @app.post("/scenario1/create_detailed")
 def create_detailed(
     customer_id: int,
@@ -158,72 +77,51 @@ def create_detailed(
     note: str,
     session: SessionDep,
 ):
-    if not details:
-        raise HTTPException(status_code=400, detail="details must not be empty")
-
     try:
-        # 1. Chuẩn bị tham số và câu lệnh INSERT vào biến bảng @Details
-        insert_lines = []
-        print(note)
-        bind_params = {
-            "customer_id": customer_id,
-            "branch_id": branch_id,
-            "receptionist_id": receptionist_id,
-            "note": note,
-        }
-
-        for i, d in enumerate(details):
-            if "service_id" not in d or "petid" not in d:
-                raise HTTPException(status_code=400, detail=f"details[{i}] missing service_id/petid")
-            
-            bind_params[f"service_id_{i}"] = int(d["service_id"])
-            bind_params[f"petid_{i}"] = int(d["petid"])
-            # Xử lý note tránh lỗi null
-            bind_params[f"detail_note_{i}"] = str(d.get("note") or "") 
-            
-            insert_lines.append(
-                f"INSERT INTO @Details (ServiceID, PetID, Note) VALUES (:service_id_{i}, :petid_{i}, :detail_note_{i});"
-            )
-
-        # 2. Xây dựng câu SQL
-        # Lưu ý: Không cần SELECT @RC hay @BookingID ở cuối, vì SP đã tự SELECT trả về rồi.
         sql = text(
             """
-            SET NOCOUNT ON;
-            DECLARE @Details dbo.BookingDetailList;
+            DECLARE @RC int;
+            DECLARE @BookingID int;
+            DECLARE @Details [dbo].[BookingDetailList];
             
+            -- Insert booking details into table variable
             """
-            + "\n".join(insert_lines)
+            + "\n".join(
+                [
+                    f"INSERT INTO @Details (ServiceID, PetID, Note) VALUES ({d['service_id']}, {d['petid']}, {repr(d.get('note'))});"
+                    for d in details
+                ]
+            )
             + """
             
-            -- Gọi SP, SP sẽ trả về 1 dòng chứa BookingID
-            EXEC dbo.SP_Booking_CreateDetailed
+            -- Execute stored procedure
+            EXEC @RC = [dbo].[SP_Booking_CreateDetailed]
                 @CustomerID = :customer_id,
                 @BranchID = :branch_id,
                 @ReceptionistID = :receptionist_id,
                 @Details = @Details,
-                @Note = :note;
-            """
+                @Note = :note,
+                @BookingID = @BookingID OUTPUT;
+        """
         )
 
-        # 3. Thực thi và lấy kết quả
-        result = session.execute(sql, bind_params).fetchone()
+        session.execute(
+            sql,
+            {
+                "customer_id": customer_id,
+                "branch_id": branch_id,
+                "receptionist_id": receptionist_id,
+                "note": note,
+            },
+        )
+
         session.commit()
 
-        if not result:
-            raise HTTPException(status_code=500, detail="No result returned from SP_Booking_CreateDetailed")
-
-        # 4. Lấy BookingID (Kết quả chỉ có 1 cột duy nhất)
-        booking_id = result[0]
-        
-        return {"booking_id": booking_id}
-
-    except HTTPException:
-        raise
     except Exception as e:
+        
         session.rollback()
-        print(f"Error in create_detailed: {str(e)}") # Log lỗi để dễ debug
-        raise HTTPException(status_code=500, detail=str(e))
+        raise e
+
 
 @app.post("/scenario1/pet_add")
 def add_pet(
@@ -237,20 +135,21 @@ def add_pet(
     session: SessionDep,
 ):
     try:
-        # SP_Pet_Add returns a result set with PetID
         result = session.execute(
-            text(
-                """
-                EXEC dbo.SP_Pet_Add
-                    @CustomerID = :customer_id,
-                    @PetName = :pet_name,
-                    @Species = :species,
-                    @Breed = :breed,
-                    @DateOfBirth = :date_of_birth,
-                    @Gender = :gender,
-                    @HealthStatus = :health_status;
-                """
-            ),
+            text("""
+            DECLARE @RC INT;
+
+            EXECUTE @RC = dbo.sp_Pet_Add
+                @CustomerID = :customer_id,
+                @PetName = :pet_name,
+                @Species = :species,
+                @Breed = :breed,
+                @DateOfBirth = :date_of_birth,
+                @Gender = :gender,
+                @HealthStatus = :health_status;
+
+            SELECT @RC AS return_code;
+            """),
             {
                 "customer_id": customer_id,
                 "pet_name": pet_name,
@@ -264,16 +163,11 @@ def add_pet(
 
         session.commit()
 
-        if not result:
-            raise HTTPException(status_code=500, detail="No result returned from SP_Pet_Add")
+        if result is None:
+            raise HTTPException(500, "No result returned from stored procedure")
 
-        # result can be tuple-like or mapping
-        pet_id = result[0]
-        return {"PetID": pet_id}
+        return {"PetID": result[0]}
 
-    except HTTPException:
-        session.rollback()
-        raise
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
